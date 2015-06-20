@@ -1,8 +1,8 @@
-/* esp_http_node - ESP8266 Webserver with a DHT sensor as an input, an NTP set RTC, a bistable relay, and an LED output
+/* esp_mqtt_node - ESP8266 mqtt node with a DHT sensor as an input, an NTP set RTC, a bistable relay, and an LED output
 
-   Based on DHTServer(ESP8266Webserver, DHTexample, and BlinkWithoutDelay), NTPClient, NTP2RTC, DS1307_simple,  (thank you)
+   Based on DHTServer(ESP8266Webserver, DHTexample, and BlinkWithoutDelay), NTPClient, NTP2RTC, DS1307_simple,mqtt_publish_in_callback  (thank you)
 
-   Version 1.1  6/20/2015   Evan Allen
+   Version 1.0  6/20/2015  Evan Allen
 */
 
 #include <ESP8266WiFi.h>
@@ -10,7 +10,7 @@
 #include <WiFiUdp.h>
 #include <WiFiClient.h>
 #include <ESP8266WebServer.h>
-
+#include <PubSubClient.h>
 
 
 #include <pgmspace.h>
@@ -33,16 +33,17 @@ boolean relayState = 0;
 const char* ssid     = "i3";
 const char* password = "";
 
-// multicast DNS responder
-MDNSResponder mdns;
-const char* hostname = "espNode";
+
 //rtc timer variables
 const unsigned long rtc_time = 600000; //timeout for the knob turn in thousandths of a second (600000 = 10 mins)
 unsigned long rtc_start_time = millis(); //used for the count down timer
 unsigned long current_time = millis();
 
 
-ESP8266WebServer server(80);
+// Update these with values suitable for your network.
+IPAddress server(10, 13, 0, 134);
+
+PubSubClient client(server);
 
 //ntp stuff
 unsigned int localPort = 2390;      // local port to listen for UDP packets
@@ -67,13 +68,7 @@ String webString = "";   // String to display
 unsigned long previousMillis = 0;        // will store last temp was read
 const long interval = 2000;              // interval at which to read sensor
 
-void handle_root() {
-  webString = "Hello from the weather esp8266, read from /temp or /humidity.  \nBy calling /LED/On or /LED/Off you can toggle the LED, /LED/State checkes the current state of the LED.  \nBy calling /RTC/get you can get the current time or /RTC/set will get the time from NTP and set it";
-  webString += "\nTime: ";
-  webString += getTime();
-  server.send(200, "text/plain", webString);
-  delay(100);
-}
+
 void printDateTime(const RtcDateTime& dt)
 {
   Serial.print(returnDateTime(dt));
@@ -112,6 +107,128 @@ String returnDateTime(const RtcDateTime& dt)
   return datestring;
 }
 
+// Callback function
+void callback(const MQTT::Publish& pub) {
+  if(pub.payload_string().equals("RTC"))
+  {
+    //do rtc stuff
+  } else if(pub.payload_string().equals("temp"))
+  {
+    gettemperature();       // read sensor
+    webString = "Temperature: " + String((int)temp_f) + " F"; // Arduino has a hard time with float to string
+    webString += "\nTime: ";
+    webString += getTime();
+    client.publish("outTopic",webString);
+  } else if(pub.payload_string().equals("hum"))
+  {
+       gettemperature();           // read sensor
+    webString = "Humidity: " + String((int)humidity) + "%";
+    webString += "\nTime: ";
+    webString += getTime();
+    client.publish("outTopic",webString);               // send to someones browser when asked
+
+      } else if(pub.payload_string().equals("relay on"))
+  {
+       if (relayState) {
+      webString = "The Relay is already on";
+    } else {
+      digitalWrite(ONPIN, 1);
+      delay(5);
+      digitalWrite(ONPIN, 0);
+      relayState = 1;
+      webString = "The Relay has been turned on";
+    }
+    webString += "\nTime: ";
+    webString += getTime();
+    client.publish("outTopic",webString);               // send to someones browser when asked
+ 
+    
+      } else if(pub.payload_string().equals("relay off"))
+  {
+      if (relayState) {
+      digitalWrite(OFFPIN, 1);
+      delay(5);
+      digitalWrite(OFFPIN, 0);
+      relayState = 0;
+      webString = "The Relay has been turned off";
+    } else {
+      webString = "Relay is already off";
+    }
+    webString += "\nTime: ";
+    webString += getTime();
+    client.publish("outTopic",webString);               // send to someones browser when asked
+
+    
+      } else if(pub.payload_string().equals("relay state"))
+  {
+       if (relayState) {
+      webString = "Relay is on";
+    } else {
+      webString = "Relay is off";
+    }
+    webString += "\nTime: ";
+    webString += getTime();
+    client.publish("outTopic",webString);               // send to someones browser when asked
+ 
+    
+      } else if(pub.payload_string().equals("led on"))
+  {
+        if (!digitalRead(LEDPIN)) {
+      webString = "The LED is already on";
+    } else {
+      digitalWrite(LEDPIN, 0);
+      webString = "The LED has been turned on";
+    }
+    webString += "\nTime: ";
+    webString += getTime();
+    client.publish("outTopic",webString);               // send to someones browser when asked
+  
+      } else if(pub.payload_string().equals("led off"))
+  {
+       if (!digitalRead(LEDPIN)) {
+      digitalWrite(LEDPIN, 1);
+      webString = "The LED has been turned off";
+    } else {
+      webString = "LED is already off";
+    }
+    webString += "\nTime: ";
+    webString += getTime();
+   client.publish("outTopic",webString);               // send to someones browser when asked
+ 
+    
+          } else if(pub.payload_string().equals("led state"))
+  {
+    
+       if (!digitalRead(LEDPIN)) {
+      webString = "LED is on";
+    } else {
+      webString = "LED is off";
+    }
+    webString += "\nTime: ";
+    webString += getTime();
+   client.publish("outTopic",webString);               // send to someones browser when asked
+          } else if(pub.payload_string().equals("rtc set"))
+  {
+       setRTC();
+    webString = "RTC Set. Time: ";
+    webString += getTime();
+    client.publish("outTopic",webString);               // send to someones browser when asked
+
+              } else if(pub.payload_string().equals("rtc get"))
+  {
+        webString = "Time: ";
+    webString += getTime();
+    client.publish("outTopic",webString);               // send to someones browser when asked
+ 
+    
+  } else
+  {
+  }
+
+  Serial.print(pub.topic());
+  Serial.print(" => ");
+  Serial.println(pub.payload_string());
+}
 void setup(void)
 {
   // You can open the Arduino IDE Serial Monitor window to see what the code is doing
@@ -123,6 +240,8 @@ void setup(void)
   digitalWrite(ONPIN, 0);
   pinMode(OFFPIN, OUTPUT);
   digitalWrite(OFFPIN, 0);
+  
+  client.set_callback(callback);
   // Connect to WiFi network
   WiFi.begin(ssid, password);
   Serial.print("\n\r \n\rWorking to connect");
@@ -146,20 +265,6 @@ void setup(void)
   Serial.print("Local port: ");
   Serial.println(udp.localPort());
   
-    // Set up mDNS responder:
-  // - first argument is the domain name, in this example
-  //   the fully-qualified domain name is "esp8266.local"
-  // - second argument is the IP address to advertise
-  //   we send our IP address on the WiFi network
-  if (!mdns.begin(hostname, WiFi.localIP())) {
-    Serial.println("Error setting up MDNS responder!");
-    while(1) { 
-      delay(1000);
-    }
-  }
-  Serial.print("mDNS responder started: go to http://");
-  Serial.print(hostname);
-  Serial.println(".local");
   
   //--------RTC SETUP ------------
   Rtc.Begin();
@@ -205,114 +310,13 @@ void setup(void)
   // never assume the Rtc was last configured by you, so
   // just clear them to your needed state
   Rtc.SetSquareWavePin(DS1307SquareWaveOut_Low);
-  server.on("/", handle_root);
-
-  server.on("/temp", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    gettemperature();       // read sensor
-    webString = "Temperature: " + String((int)temp_f) + " F"; // Arduino has a hard time with float to string
-    webString += "\nTime: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);            // send to someones browser when asked
-  });
-
-  server.on("/humidity", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    gettemperature();           // read sensor
-    webString = "Humidity: " + String((int)humidity) + "%";
-    webString += "\nTime: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
-
-  server.on("/LED/On", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    if (!digitalRead(LEDPIN)) {
-      webString = "The LED is already on";
-    } else {
-      digitalWrite(LEDPIN, 0);
-      webString = "The LED has been turned on";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
-
-  server.on("/LED/Off", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    if (!digitalRead(LEDPIN)) {
-      digitalWrite(LEDPIN, 1);
-      webString = "The LED has been turned off";
-    } else {
-      webString = "LED is already off";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
-
-  server.on("/LED/State", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    if (!digitalRead(LEDPIN)) {
-      webString = "LED is on";
-    } else {
-      webString = "LED is off";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
   
-    server.on("/Relay/On", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    if (relayState) {
-      webString = "The Relay is already on";
-    } else {
-      digitalWrite(ONPIN, 1);
-      delay(5);
-      digitalWrite(ONPIN, 0);
-      relayState = 1;
-      webString = "The Relay has been turned on";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
+  
+  if (client.connect("arduinoClient")) {
+    client.publish("outTopic","hello world");
+    client.subscribe("inTopic");
+  }
 
-  server.on("/Relay/Off", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    if (relayState) {
-      digitalWrite(OFFPIN, 1);
-      delay(5);
-      digitalWrite(OFFPIN, 0);
-      relayState = 0;
-      webString = "The Relay has been turned off";
-    } else {
-      webString = "Relay is already off";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
-    server.on("/Relay/State", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    if (relayState) {
-      webString = "Relay is on";
-    } else {
-      webString = "Relay is off";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
-
-  server.on("/RTC/set", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    setRTC();
-    webString = "RTC Set. Time: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
-    server.on("/RTC/get", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    webString = "Time: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
-
-  server.onNotFound(handleNotFound);
-  server.begin();
-  Serial.println("HTTP server started");
 }
 
 void loop(void)
@@ -322,8 +326,12 @@ void loop(void)
   {
     setRTC();
   }
-  server.handleClient();
+  client.loop();
+  
+  //send things periodically
+  
 }
+
 
 void gettemperature() {
   // Wait at least 2 seconds seconds between measurements.
@@ -348,22 +356,6 @@ void gettemperature() {
   }
 }
 
-void handleNotFound() {
-  String message = "File Not Found\n\n";
-  message += "URI: ";
-  message += server.uri();
-  message += "\nMethod: ";
-  message += (server.method() == HTTP_GET) ? "GET" : "POST";
-  message += "\nArguments: ";
-  message += server.args();
-  message += "\n";
-  for (uint8_t i = 0; i < server.args(); i++) {
-    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
-  }
-  message += "\nTime: ";
-  message += getTime();
-  server.send(404, "text/plain", message);
-}
 
 String getTime()
 {
