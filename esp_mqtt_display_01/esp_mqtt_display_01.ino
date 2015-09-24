@@ -2,7 +2,7 @@
 
    Based on ESP8266Webserver,mqtt_publish_in_callback   (thank you)
 
-   Version 1.0  6/20/2015  Evan Allen
+   Version 1.1  9/23/2015  Evan Allen
 */
 
 #include <ESP8266WiFi.h>
@@ -16,7 +16,7 @@ const char* ssid     = "i3";
 const char* password = "";
 
 // Update these with values suitable for your network.
-IPAddress server(10, 13, 0, 202);
+IPAddress server(10, 13, 0, 136);
 
 PubSubClient client(server);
 
@@ -24,6 +24,8 @@ String webString = "";   // String to display
 String tempString = "";   // String to temporarily store stuff
 int character = 0;
 int d = 500;
+char valid[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789- ";
+bool isValid = 0;
 // Callback function
 void callback(const MQTT::Publish& pub) {
   if (pub.topic().equals("delayTopic"))
@@ -36,6 +38,26 @@ void callback(const MQTT::Publish& pub) {
   {
     tempString = "";
     tempString += pub.payload_string();
+
+
+//check if correct characters
+for (int i = 0;i<tempString.length();i++)
+  {
+    isValid = 0;
+    for (int j = 0;j<sizeof(valid);j++)
+    {
+      if(tempString.charAt(i) == valid[j])
+      {
+        isValid = 1;
+      }
+    }
+    if(!isValid)
+    {
+      tempString.setCharAt(i, '@');
+    }
+  }
+
+
 
     if (tempString.length() < 16)
     {
@@ -66,19 +88,22 @@ void setup(void)
   client.set_callback(callback);
   // Connect to WiFi network
   WiFi.begin(ssid, password);
-
+  
+Serial.print("WIFI NOT CONNECT");
   // Wait for connection
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
   }
-  Serial.print("IP ADDR ");
-  Serial.print(WiFi.localIP());
+Serial.print("WIFI CONNECTED   ");
 
-  if (client.connect("arduinoClient")) {
-    client.publish("outTopic", "hello world");
+  if (client.connect("espDisplayClient")) {
+    client.publish("logTopic", "esp display connected");
     client.subscribe("displayTopic");
     client.subscribe("delayTopic");
   }
+  Serial.print("IP ADDR ");
+  Serial.print(WiFi.localIP());
+
 
 }
 

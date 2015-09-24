@@ -16,7 +16,7 @@ const char* ssid     = "i3";
 const char* password = "";
 
 // Update these with values suitable for your network.
-IPAddress server(10, 13, 0, 134);
+IPAddress server(10, 13, 0, 136);
 
 PubSubClient client(server);
 

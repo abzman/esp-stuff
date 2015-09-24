@@ -1,8 +1,8 @@
-/* esp_mqtt_node - ESP8266 mqtt node with a DHT sensor as an input, an NTP set RTC, a bistable relay, and an LED output
-
+/* esp_mqtt_rtc - ESP8266 mqtt node with an NTP set RTC
+ *  
    Based on DHTServer(ESP8266Webserver, DHTexample, and BlinkWithoutDelay), NTPClient, NTP2RTC, DS1307_simple,mqtt_publish_in_callback  (thank you)
 
-   Version 1.1  9/22/2015  Evan Allen
+   Version 1.0  9/23/2015  Evan Allen
 */
 
 #include <ESP8266WiFi.h>
@@ -18,15 +18,7 @@
 #include <RtcDS1307.h>
 RtcDS1307 Rtc;
 
-#include <DHT.h>
-#define DHTTYPE DHT22
-#define DHTPIN  5
-
-#define LEDPIN  16
-#define ONPIN  14
-#define OFFPIN  12
 #define countof(a) (sizeof(a) / sizeof(a[0]))
-boolean relayState = 0;
 
 //char ssid[] = "abz-fi";  //  your network SSID (name)
 //char password[] = "we do what we must, because we can";       // your network password
@@ -52,21 +44,8 @@ const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of th
 byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
 WiFiUDP udp; // A UDP instance to let us send and receive packets over UDP
 
-// Initialize DHT sensor
-// NOTE: For working with a faster than ATmega328p 16 MHz Arduino chip, like an ESP8266,
-// you need to increase the threshold for cycle counts considered a 1 or 0.
-// You can do this by passing a 3rd parameter for this threshold.  It's a bit
-// of fiddling to find the right value, but in general the faster the CPU the
-// higher the value.  The default for a 16mhz AVR is a value of 6.  For an
-// Arduino Due that runs at 84mhz a value of 30 works.
-// This is for the ESP8266 processor on ESP-01
-DHT dht(DHTPIN, DHTTYPE, 11); // 11 works fine for ESP8266
 
-float humidity, temp_f;  // Values read from sensor
 String webString = "";   // String to display
-// Generally, you should use "unsigned long" for variables that hold time
-unsigned long previousMillis = 0;        // will store last temp was read
-const long interval = 2000;              // interval at which to read sensor
 
 
 void printDateTime(const RtcDateTime& dt)
@@ -109,107 +88,7 @@ String returnDateTime(const RtcDateTime& dt)
 
 // Callback function
 void callback(const MQTT::Publish& pub) {
-  if(pub.payload_string().equals("RTC"))
-  {
-    //do rtc stuff
-  } else if(pub.payload_string().equals("temp"))
-  {
-    gettemperature();       // read sensor
-    webString = "Temperature: " + String((int)temp_f) + " F"; // Arduino has a hard time with float to string
-    webString += "\nTime: ";
-    webString += getTime();
-    client.publish("outTopic",webString);
-    client.publish("displayTopic","TEMPERATURE " + String((int)temp_f) + " F");
-  } else if(pub.payload_string().equals("hum"))
-  {
-       gettemperature();           // read sensor
-    webString = "Humidity: " + String((int)humidity) + "%";
-    webString += "\nTime: ";
-    webString += getTime();
-    client.publish("outTopic",webString);               // send to someones browser when asked
-    client.publish("displayTopic","HUMIDITY " + String((int)humidity));               // send to someones browser when asked
-
-      } else if(pub.payload_string().equals("relay on"))
-  {
-       if (relayState) {
-      webString = "The Relay is already on";
-    } else {
-      digitalWrite(ONPIN, 1);
-      delay(5);
-      digitalWrite(ONPIN, 0);
-      relayState = 1;
-      webString = "The Relay has been turned on";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-    client.publish("outTopic",webString);               // send to someones browser when asked
- 
-    
-      } else if(pub.payload_string().equals("relay off"))
-  {
-      if (relayState) {
-      digitalWrite(OFFPIN, 1);
-      delay(5);
-      digitalWrite(OFFPIN, 0);
-      relayState = 0;
-      webString = "The Relay has been turned off";
-    } else {
-      webString = "Relay is already off";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-    client.publish("outTopic",webString);               // send to someones browser when asked
-
-    
-      } else if(pub.payload_string().equals("relay state"))
-  {
-       if (relayState) {
-      webString = "Relay is on";
-    } else {
-      webString = "Relay is off";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-    client.publish("outTopic",webString);               // send to someones browser when asked
- 
-    
-      } else if(pub.payload_string().equals("led on"))
-  {
-        if (!digitalRead(LEDPIN)) {
-      webString = "The LED is already on";
-    } else {
-      digitalWrite(LEDPIN, 0);
-      webString = "The LED has been turned on";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-    client.publish("outTopic",webString);               // send to someones browser when asked
-  
-      } else if(pub.payload_string().equals("led off"))
-  {
-       if (!digitalRead(LEDPIN)) {
-      digitalWrite(LEDPIN, 1);
-      webString = "The LED has been turned off";
-    } else {
-      webString = "LED is already off";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-   client.publish("outTopic",webString);               // send to someones browser when asked
- 
-    
-          } else if(pub.payload_string().equals("led state"))
-  {
-    
-       if (!digitalRead(LEDPIN)) {
-      webString = "LED is on";
-    } else {
-      webString = "LED is off";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-   client.publish("outTopic",webString);               // send to someones browser when asked
-          } else if(pub.payload_string().equals("rtc set"))
+  if(pub.payload_string().equals("rtc set"))
   {
        setRTC();
     webString = "RTC Set. Time: ";
@@ -221,8 +100,6 @@ void callback(const MQTT::Publish& pub) {
         webString = "Time: ";
     webString += getTime();
     client.publish("outTopic",webString);               // send to someones browser when asked
- 
-    
   } else
   {
   }
@@ -235,13 +112,6 @@ void setup(void)
 {
   // You can open the Arduino IDE Serial Monitor window to see what the code is doing
   Serial.begin(115200);  // Serial connection from ESP-01 via 3.3v console cable
-  dht.begin();           // initialize temperature sensor
-  pinMode(LEDPIN, OUTPUT);
-  digitalWrite(LEDPIN, 1);
-  pinMode(ONPIN, OUTPUT);
-  digitalWrite(ONPIN, 0);
-  pinMode(OFFPIN, OUTPUT);
-  digitalWrite(OFFPIN, 0);
   
   client.set_callback(callback);
   // Connect to WiFi network
@@ -315,7 +185,7 @@ void setup(void)
   
   
   if (client.connect("arduinoClient")) {
-    client.publish("outTopic","hello world");
+    client.publish("outTopic","rtc boot up");
     client.subscribe("inTopic");
   }
 
@@ -333,31 +203,6 @@ void loop(void)
   //send things periodically
   
 }
-
-
-void gettemperature() {
-  // Wait at least 2 seconds seconds between measurements.
-  // if the difference between the current time and last time you read
-  // the sensor is bigger than the interval you set, read the sensor
-  // Works better than delay for things happening elsewhere also
-  unsigned long currentMillis = millis();
-
-  if (currentMillis - previousMillis >= interval) {
-    // save the last time you read the sensor
-    previousMillis = currentMillis;
-
-    // Reading temperature for humidity takes about 250 milliseconds!
-    // Sensor readings may also be up to 2 seconds 'old' (it's a very slow sensor)
-    humidity = dht.readHumidity();          // Read humidity (percent)
-    temp_f = dht.readTemperature(true);     // Read temperature as Fahrenheit
-    // Check if any reads failed and exit early (to try again).
-    if (isnan(humidity) || isnan(temp_f)) {
-      Serial.println("Failed to read from DHT sensor!");
-      return;
-    }
-  }
-}
-
 
 String getTime()
 {
