@@ -1,37 +1,30 @@
-/* esp_http_node - ESP8266 Webserver with a DHT sensor as an input, an NTP set RTC, a bistable relay, and an LED output
+/* esp_mqtt_rtc - ESP8266 mqtt node with an NTP set RTC
+ *  
+   Based on DHTServer(ESP8266Webserver, DHTexample, and BlinkWithoutDelay), NTPClient, NTP2RTC, DS1307_simple,mqtt_publish_in_callback  (thank you)
 
-   Based on DHTServer(ESP8266Webserver, DHTexample, and BlinkWithoutDelay), NTPClient, NTP2RTC, DS1307_simple,  (thank you)
-
-   Version 1.1  6/20/2015   Evan Allen
+   Version 1.0  9/23/2015  Evan Allen
 */
 
 #include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>
 #include <WiFiUdp.h>
 #include <WiFiClient.h>
 #include <ESP8266WebServer.h>
-
+#include <PubSubClient.h>
 
 
 #include <pgmspace.h>
 #include <Wire.h>  // must be incuded here so that Arduino library object file references work
-#include <RtcDS3231.h>
+#include <RtcDS1307.h>
+RtcDS1307 Rtc;
 
-RtcDS3231 Rtc;
-
-#include <DHT.h>
-#define DHTTYPE DHT11
-#define DHTPIN  5
-
-#define LEDPIN  16
-#define ONPIN  14
-#define OFFPIN  12
 #define countof(a) (sizeof(a) / sizeof(a[0]))
-boolean relayState = 0;
 
 //char ssid[] = "abz-fi";  //  your network SSID (name)
 //char password[] = "we do what we must, because we can";       // your network password
 const char* ssid     = "i3";
 const char* password = "";
+
 
 //rtc timer variables
 const unsigned long rtc_time = 600000; //timeout for the knob turn in thousandths of a second (600000 = 10 mins)
@@ -39,7 +32,10 @@ unsigned long rtc_start_time = millis(); //used for the count down timer
 unsigned long current_time = millis();
 
 
-ESP8266WebServer server(80);
+// Update these with values suitable for your network.
+IPAddress server(10, 13, 0, 136);
+
+PubSubClient client(server);
 
 //ntp stuff
 unsigned int localPort = 2390;      // local port to listen for UDP packets
@@ -48,29 +44,10 @@ const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of th
 byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
 WiFiUDP udp; // A UDP instance to let us send and receive packets over UDP
 
-// Initialize DHT sensor
-// NOTE: For working with a faster than ATmega328p 16 MHz Arduino chip, like an ESP8266,
-// you need to increase the threshold for cycle counts considered a 1 or 0.
-// You can do this by passing a 3rd parameter for this threshold.  It's a bit
-// of fiddling to find the right value, but in general the faster the CPU the
-// higher the value.  The default for a 16mhz AVR is a value of 6.  For an
-// Arduino Due that runs at 84mhz a value of 30 works.
-// This is for the ESP8266 processor on ESP-01
-DHT dht(DHTPIN, DHTTYPE, 11); // 11 works fine for ESP8266
 
-float humidity, temp_f;  // Values read from sensor
 String webString = "";   // String to display
-// Generally, you should use "unsigned long" for variables that hold time
-unsigned long previousMillis = 0;        // will store last temp was read
-const long interval = 2000;              // interval at which to read sensor
 
-void handle_root() {
-  webString = "Hello from the weather esp8266, read from /temp or /humidity.  \nBy calling /LED/On or /LED/Off you can toggle the LED, /LED/State checkes the current state of the LED.  \nBy calling /RTC/get you can get the current time or /RTC/set will get the time from NTP and set it";
-  webString += "\nTime: ";
-  webString += getTime();
-  server.send(200, "text/plain", webString);
-  delay(100);
-}
+
 void printDateTime(const RtcDateTime& dt)
 {
   Serial.print(returnDateTime(dt));
@@ -109,17 +86,34 @@ String returnDateTime(const RtcDateTime& dt)
   return datestring;
 }
 
+// Callback function
+void callback(const MQTT::Publish& pub) {
+  if(pub.payload_string().equals("rtc set"))
+  {
+       setRTC();
+    webString = "RTC Set. Time: ";
+    webString += getTime();
+    client.publish("outTopic",webString);               // send to someones browser when asked
+
+              } else if(pub.payload_string().equals("rtc get"))
+  {
+        webString = "Time: ";
+    webString += getTime();
+    client.publish("outTopic",webString);               // send to someones browser when asked
+  } else
+  {
+  }
+
+  Serial.print(pub.topic());
+  Serial.print(" => ");
+  Serial.println(pub.payload_string());
+}
 void setup(void)
 {
   // You can open the Arduino IDE Serial Monitor window to see what the code is doing
   Serial.begin(115200);  // Serial connection from ESP-01 via 3.3v console cable
-  dht.begin();           // initialize temperature sensor
-  pinMode(LEDPIN, OUTPUT);
-  digitalWrite(LEDPIN, 1);
-  pinMode(ONPIN, OUTPUT);
-  digitalWrite(ONPIN, 0);
-  pinMode(OFFPIN, OUTPUT);
-  digitalWrite(OFFPIN, 0);
+  
+  client.set_callback(callback);
   // Connect to WiFi network
   WiFi.begin(ssid, password);
   Serial.print("\n\r \n\rWorking to connect");
@@ -146,6 +140,9 @@ void setup(void)
   
   //--------RTC SETUP ------------
   Rtc.Begin();
+#if defined(ESP8266)
+  Wire.begin(0, 2);
+#endif
 
   RtcDateTime compiled = RtcDateTime(__DATE__, __TIME__);
 
@@ -164,14 +161,14 @@ void setup(void)
     // it will also reset the valid flag internally unless the Rtc device is
     // having an issue
 
-    setRTC();
+    Rtc.SetDateTime(compiled);
   }
 
   RtcDateTime now = Rtc.GetDateTime();
   if (now < compiled)
   {
     Serial.println("RTC is older than compile time!  (Updating DateTime)");
-    setRTC();
+    Rtc.SetDateTime(compiled);
   }
   else if (now > compiled)
   {
@@ -184,115 +181,14 @@ void setup(void)
 
   // never assume the Rtc was last configured by you, so
   // just clear them to your needed state
-  Rtc.SetSquareWavePin(DS3231SquareWavePin_ModeNone);
-  server.on("/", handle_root);
-
-  server.on("/temp", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    gettemperature();       // read sensor
-    webString = "Temperature: " + String((int)temp_f) + " F"; // Arduino has a hard time with float to string
-    webString += "\nTime: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);            // send to someones browser when asked
-  });
-
-  server.on("/humidity", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    gettemperature();           // read sensor
-    webString = "Humidity: " + String((int)humidity) + "%";
-    webString += "\nTime: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
-
-  server.on("/LED/On", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    if (!digitalRead(LEDPIN)) {
-      webString = "The LED is already on";
-    } else {
-      digitalWrite(LEDPIN, 0);
-      webString = "The LED has been turned on";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
-
-  server.on("/LED/Off", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    if (!digitalRead(LEDPIN)) {
-      digitalWrite(LEDPIN, 1);
-      webString = "The LED has been turned off";
-    } else {
-      webString = "LED is already off";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
-
-  server.on("/LED/State", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    if (!digitalRead(LEDPIN)) {
-      webString = "LED is on";
-    } else {
-      webString = "LED is off";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
+  Rtc.SetSquareWavePin(DS1307SquareWaveOut_Low);
   
-    server.on("/Relay/On", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    if (relayState) {
-      webString = "The Relay is already on";
-    } else {
-      digitalWrite(ONPIN, 1);
-      delay(5);
-      digitalWrite(ONPIN, 0);
-      relayState = 1;
-      webString = "The Relay has been turned on";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
+  
+  if (client.connect("arduinoClient")) {
+    client.publish("outTopic","rtc boot up");
+    client.subscribe("inTopic");
+  }
 
-  server.on("/Relay/Off", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    if (relayState) {
-      digitalWrite(OFFPIN, 1);
-      delay(5);
-      digitalWrite(OFFPIN, 0);
-      relayState = 0;
-      webString = "The Relay has been turned off";
-    } else {
-      webString = "Relay is already off";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
-    server.on("/Relay/State", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    if (relayState) {
-      webString = "Relay is on";
-    } else {
-      webString = "Relay is off";
-    }
-    webString += "\nTime: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
-
-  server.on("/RTC/set", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    setRTC();
-    webString = "RTC Set. Time: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
-    server.on("/RTC/get", []() { // if you add this subdirectory to your webserver call, you get text below :)
-    webString = "Time: ";
-    webString += getTime();
-    server.send(200, "text/plain", webString);               // send to someones browser when asked
-  });
-
-  server.onNotFound(handleNotFound);
-  server.begin();
-  Serial.println("HTTP server started");
 }
 
 void loop(void)
@@ -302,47 +198,10 @@ void loop(void)
   {
     setRTC();
   }
-  server.handleClient();
-}
-
-void gettemperature() {
-  // Wait at least 2 seconds seconds between measurements.
-  // if the difference between the current time and last time you read
-  // the sensor is bigger than the interval you set, read the sensor
-  // Works better than delay for things happening elsewhere also
-  unsigned long currentMillis = millis();
-
-  if (currentMillis - previousMillis >= interval) {
-    // save the last time you read the sensor
-    previousMillis = currentMillis;
-
-    // Reading temperature for humidity takes about 250 milliseconds!
-    // Sensor readings may also be up to 2 seconds 'old' (it's a very slow sensor)
-    humidity = dht.readHumidity();          // Read humidity (percent)
-    temp_f = dht.readTemperature(true);     // Read temperature as Fahrenheit
-    // Check if any reads failed and exit early (to try again).
-    if (isnan(humidity) || isnan(temp_f)) {
-      Serial.println("Failed to read from DHT sensor!");
-      return;
-    }
-  }
-}
-
-void handleNotFound() {
-  String message = "File Not Found\n\n";
-  message += "URI: ";
-  message += server.uri();
-  message += "\nMethod: ";
-  message += (server.method() == HTTP_GET) ? "GET" : "POST";
-  message += "\nArguments: ";
-  message += server.args();
-  message += "\n";
-  for (uint8_t i = 0; i < server.args(); i++) {
-    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
-  }
-  message += "\nTime: ";
-  message += getTime();
-  server.send(404, "text/plain", message);
+  client.loop();
+  
+  //send things periodically
+  
 }
 
 String getTime()
@@ -356,7 +215,7 @@ String getTime()
 
   RtcDateTime now = Rtc.GetDateTime();
 
-  return returnDateTime(now+(20 * 3600L));
+  return returnDateTime(now);
 }
 
 
@@ -442,7 +301,9 @@ void setRTC()
     t4 += 1;               // adjust the delay(1000) at begin of loop!
     if (f4 > 0.4) t4++;    // adjust fractional part, see above
     Rtc.SetDateTime(t4);
-    Serial.print("RTC after : "); printDateTime(Rtc.GetDateTime()+(20 * 3600L)); Serial.println();
+    Serial.print("RTC after : ");
+    printDateTime(Rtc.GetDateTime());    
+    Serial.println();
     printDateTime(t4); Serial.println(f4, 4);
     Serial.println();
   }
